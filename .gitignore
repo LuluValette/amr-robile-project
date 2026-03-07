@@ -6,3 +6,8 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+src/Robile/
+src/robile_description/
+src/robile_gazebo/
+src/robile_navigation/
+src/robile_interfaces/

@@ -1,0 +1,21 @@
+repositories:
+  Robile:
+    type: git
+    url: https://github.com/HBRS-AMR/Robile.git
+    version: ros2
+  robile_description:
+    type: git
+    url: https://github.com/HBRS-AMR/robile_description.git
+    version: ros2
+  robile_gazebo:
+    type: git
+    url: https://github.com/HBRS-AMR/robile_gazebo.git
+    version: ros2
+  robile_navigation:
+    type: git
+    url: https://github.com/HBRS-AMR/robile_navigation.git
+    version: ros2
+  robile_interfaces:
+    type: git
+    url: https://github.com/HBRS-AMR/robile_interfaces.git
+    version: main
