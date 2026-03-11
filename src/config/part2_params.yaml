@@ -1,0 +1,14 @@
+particle_filter_localization:
+  ros__parameters:
+    num_particles: 300
+    random_particle_ratio: 0.05
+    odom_topic: /odom
+    scan_topic: /scan
+    map_topic: /map
+    scan_downsample: 24
+    z_hit_sigma: 0.25
+    motion_noise_lin: 0.02
+    motion_noise_ang: 0.04
+    occ_threshold: 50
+    publish_particles_topic: /pf_particles
+    publish_pose_topic: /pf_pose

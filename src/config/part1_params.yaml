@@ -1,0 +1,18 @@
+path_motion_planner:
+  ros__parameters:
+    map_topic: /map
+    odom_topic: /odom
+    scan_topic: /scan
+    goal_topic: /goal_pose
+    cmd_vel_topic: /cmd_vel
+    robot_radius: 0.18
+    lookahead_waypoint_dist: 0.35
+    waypoint_reached_dist: 0.25
+    goal_reached_dist: 0.18
+    max_linear_speed: 0.22
+    max_angular_speed: 1.2
+    k_att: 1.2
+    k_rep: 0.12
+    repulsive_range: 0.9
+    replan_period_s: 1.5
+    occ_threshold: 50
