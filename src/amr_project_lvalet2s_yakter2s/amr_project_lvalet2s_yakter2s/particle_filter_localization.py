@@ -5,10 +5,11 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Pose, PoseArray, PoseStamped, PoseWithCovarianceStamped, Quaternion
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped, PoseWithCovarianceStamped, Quaternion, TransformStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+import tf2_ros
 
 from .common import OccupancyGridMap, simulate_ray_cast, normalize_angle
 
@@ -62,6 +63,7 @@ class ParticleFilterLocalizationNode(Node):
             10
         )
         self.pose_stamped_publisher = self.create_publisher(PoseStamped, '/pf_pose_stamped', 10)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.create_timer(0.5, self.publish_filter_state)
 
@@ -405,6 +407,16 @@ class ParticleFilterLocalizationNode(Node):
         pose_stamped_msg.header = pose_with_cov_msg.header
         pose_stamped_msg.pose = pose_with_cov_msg.pose.pose
         self.pose_stamped_publisher.publish(pose_stamped_msg)
+
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
+        t.transform.translation.x = mean_x
+        t.transform.translation.y = mean_y
+        t.transform.translation.z = 0.0
+        t.transform.rotation = self.yaw_to_quaternion(mean_yaw)
+        self.tf_broadcaster.sendTransform(t)
 
 
 def main(args=None) -> None:
