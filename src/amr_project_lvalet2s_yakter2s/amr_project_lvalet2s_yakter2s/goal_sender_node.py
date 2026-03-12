@@ -35,7 +35,7 @@ class GoalSenderNode(Node):
             self.get_logger().info(
                 f'Goal published at x={self.goal_x:.2f}, y={self.goal_y:.2f}, yaw={self.goal_yaw:.2f}'
             )
-            raise SystemExit
+            self.timer.cancel()
 
 
 def main(args=None) -> None:
@@ -53,7 +53,7 @@ def main(args=None) -> None:
 
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()

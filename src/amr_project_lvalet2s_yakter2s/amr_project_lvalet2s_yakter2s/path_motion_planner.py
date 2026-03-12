@@ -24,6 +24,7 @@ class PathMotionPlannerNode(Node):
 
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('pose_topic', '')          # if set, use localized pose instead of odometry
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('goal_topic', '/goal_pose')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
@@ -43,6 +44,7 @@ class PathMotionPlannerNode(Node):
         self.robot_pose: Optional[Tuple[float, float, float]] = None
         self.latest_scan: Optional[LaserScan] = None
         self.goal_position_xy: Optional[Tuple[float, float]] = None
+        self._using_localized_pose = False
 
         self.global_path_world: List[Tuple[float, float]] = []
         self.waypoints_world: List[Tuple[float, float]] = []
@@ -53,6 +55,14 @@ class PathMotionPlannerNode(Node):
         self.create_subscription(Odometry, self.get_parameter('odom_topic').value, self.handle_odometry, 20)
         self.create_subscription(LaserScan, self.get_parameter('scan_topic').value, self.handle_scan, 20)
         self.create_subscription(PoseStamped, self.get_parameter('goal_topic').value, self.handle_goal, 10)
+
+        pose_topic = self.get_parameter('pose_topic').value
+        if pose_topic:
+            self._using_localized_pose = True
+            self.create_subscription(PoseStamped, pose_topic, self.handle_localized_pose, 20)
+            self.get_logger().info(f'Using localized pose from: {pose_topic}')
+        else:
+            self.get_logger().info('No pose_topic set — falling back to odometry.')
 
         self.cmd_vel_publisher = self.create_publisher(Twist, self.get_parameter('cmd_vel_topic').value, 10)
         self.marker_publisher = self.create_publisher(MarkerArray, '/planner_markers', 10)
@@ -72,6 +82,9 @@ class PathMotionPlannerNode(Node):
         )
 
     def handle_odometry(self, msg: Odometry) -> None:
+        if self._using_localized_pose:
+            return  # localized pose takes priority, ignore raw odometry
+
         position = msg.pose.pose.position
         orientation = msg.pose.pose.orientation
 
@@ -81,6 +94,14 @@ class PathMotionPlannerNode(Node):
         )
 
         self.robot_pose = (position.x, position.y, yaw)
+
+    def handle_localized_pose(self, msg: PoseStamped) -> None:
+        orientation = msg.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z)
+        )
+        self.robot_pose = (msg.pose.position.x, msg.pose.position.y, yaw)
 
     def handle_scan(self, msg: LaserScan) -> None:
         self.latest_scan = msg
@@ -277,6 +298,9 @@ class PathMotionPlannerNode(Node):
 
         if distance_to_goal < float(self.get_parameter('goal_reached_distance_m').value):
             self.stop_robot()
+            self.goal_position_xy = None
+            self.waypoints_world = []
+            self.get_logger().info('Goal reached.')
             return
 
         if not self.waypoints_world:

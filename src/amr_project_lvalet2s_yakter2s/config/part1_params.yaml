@@ -2,17 +2,18 @@ path_motion_planner:
   ros__parameters:
     map_topic: /map
     odom_topic: /odom
+    pose_topic: /pf_pose_stamped   # remove or leave empty to fall back to odometry
     scan_topic: /scan
     goal_topic: /goal_pose
     cmd_vel_topic: /cmd_vel
-    robot_radius: 0.18
-    lookahead_waypoint_dist: 0.35
-    waypoint_reached_dist: 0.25
-    goal_reached_dist: 0.18
-    max_linear_speed: 0.22
-    max_angular_speed: 1.2
-    k_att: 1.2
-    k_rep: 0.12
-    repulsive_range: 0.9
+    robot_radius_m: 0.18
+    lookahead_waypoint_distance_m: 0.35
+    waypoint_reached_distance_m: 0.25
+    goal_reached_distance_m: 0.18
+    max_linear_speed_mps: 0.22
+    max_angular_speed_rps: 1.2
+    attractive_gain: 1.2
+    repulsive_gain: 0.12
+    repulsive_effect_range_m: 0.9
     replan_period_s: 1.5
-    occ_threshold: 50
+    occupied_threshold: 50

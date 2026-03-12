@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 import numpy as np
+from scipy.ndimage import binary_dilation
 
 
 @dataclass
@@ -64,18 +65,18 @@ def inflate_obstacles(
     inflated_grid = np.array(occupancy_grid.occupancy_data, copy=True)
     inflation_radius_cells = max(1, int(math.ceil(inflation_radius_m / occupancy_grid.map_resolution)))
 
-    occupied_cells = np.argwhere(inflated_grid >= occupied_threshold)
-    for occupied_y, occupied_x in occupied_cells:
-        for offset_y in range(-inflation_radius_cells, inflation_radius_cells + 1):
-            for offset_x in range(-inflation_radius_cells, inflation_radius_cells + 1):
-                neighbor_x = occupied_x + offset_x
-                neighbor_y = occupied_y + offset_y
+    # Build a circular structuring element
+    diameter = 2 * inflation_radius_cells + 1
+    structuring_element = np.zeros((diameter, diameter), dtype=bool)
+    for dy in range(-inflation_radius_cells, inflation_radius_cells + 1):
+        for dx in range(-inflation_radius_cells, inflation_radius_cells + 1):
+            if dx * dx + dy * dy <= inflation_radius_cells * inflation_radius_cells:
+                structuring_element[dy + inflation_radius_cells, dx + inflation_radius_cells] = True
 
-                if not occupancy_grid.contains_cell(neighbor_x, neighbor_y):
-                    continue
-
-                if offset_x * offset_x + offset_y * offset_y <= inflation_radius_cells * inflation_radius_cells:
-                    inflated_grid[neighbor_y, neighbor_x] = max(inflated_grid[neighbor_y, neighbor_x], 100)
+    # Dilate the obstacle mask in one vectorized operation
+    obstacle_mask = inflated_grid >= occupied_threshold
+    dilated_mask = binary_dilation(obstacle_mask, structure=structuring_element)
+    inflated_grid[dilated_mask] = 100
 
     return inflated_grid
 
@@ -208,20 +209,39 @@ def simulate_ray_cast(
     step_size: float = 0.05,
     occupied_threshold: int = 50
 ) -> float:
-    traveled_distance = 0.0
+    """Vectorised DDA ray cast. Pre-computes all sample coordinates with numpy
+    and looks up the occupancy grid in one batch, avoiding a Python loop per step."""
+    cos_a = math.cos(beam_angle_world)
+    sin_a = math.sin(beam_angle_world)
+    n_steps = int(max_range / step_size) + 1
 
-    while traveled_distance <= max_range:
-        sample_x = robot_x + traveled_distance * math.cos(beam_angle_world)
-        sample_y = robot_y + traveled_distance * math.sin(beam_angle_world)
+    distances = np.arange(n_steps, dtype=np.float32) * step_size
+    sample_x = robot_x + distances * cos_a
+    sample_y = robot_y + distances * sin_a
 
-        cell_x, cell_y = occupancy_grid.world_to_cell(sample_x, sample_y)
+    cell_x = ((sample_x - occupancy_grid.origin_world_x) / occupancy_grid.map_resolution).astype(np.int32)
+    cell_y = ((sample_y - occupancy_grid.origin_world_y) / occupancy_grid.map_resolution).astype(np.int32)
 
-        if not occupancy_grid.contains_cell(cell_x, cell_y):
-            return traveled_distance
+    in_bounds = (
+        (cell_x >= 0) & (cell_x < occupancy_grid.map_width) &
+        (cell_y >= 0) & (cell_y < occupancy_grid.map_height)
+    )
 
-        if occupancy_grid.get_occupancy(cell_x, cell_y) >= occupied_threshold:
-            return traveled_distance
+    # First out-of-bounds step terminates the ray
+    out_idx = np.argwhere(~in_bounds)
+    first_oob = int(out_idx[0]) if len(out_idx) else n_steps
 
-        traveled_distance += step_size
+    if first_oob == 0:
+        return 0.0
 
-    return max_range
+    # Only look up cells that are inside the grid
+    cx = cell_x[:first_oob]
+    cy = cell_y[:first_oob]
+    occ = occupancy_grid.occupancy_data[cy, cx]
+
+    hit = np.argwhere(occ >= occupied_threshold)
+    if len(hit):
+        return float(distances[int(hit[0])])
+
+    # Ray exited the map without hitting anything
+    return float(distances[first_oob - 1]) if first_oob < n_steps else max_range

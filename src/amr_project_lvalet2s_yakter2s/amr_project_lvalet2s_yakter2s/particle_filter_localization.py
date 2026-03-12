@@ -37,6 +37,8 @@ class ParticleFilterLocalizationNode(Node):
         self.declare_parameter('occupied_threshold', 50)
         self.declare_parameter('particles_topic', '/pf_particles')
         self.declare_parameter('estimated_pose_topic', '/pf_pose')
+        self.declare_parameter('kidnap_weight_threshold', 0.002)
+        self.declare_parameter('kidnap_recovery_ratio', 0.5)
 
         self.map_data = OccupancyGridMap()
         self.latest_scan: Optional[LaserScan] = None
@@ -146,9 +148,9 @@ class ParticleFilterLocalizationNode(Node):
             noisy_translation = translation_distance + random.gauss(0.0, motion_noise_linear + 0.05 * abs(translation_distance))
             noisy_rotation = rotation_delta + random.gauss(0.0, motion_noise_angular + 0.05 * abs(rotation_delta))
 
-            particle.yaw = normalize_angle(particle.yaw + noisy_rotation)
             particle.x += noisy_translation * math.cos(particle.yaw)
             particle.y += noisy_translation * math.sin(particle.yaw)
+            particle.yaw = normalize_angle(particle.yaw + noisy_rotation)
 
     def get_scan_sample_indices(self) -> List[int]:
         if self.latest_scan is None:
@@ -224,6 +226,52 @@ class ParticleFilterLocalizationNode(Node):
 
         for particle in self.particles:
             particle.weight /= total_weight
+
+        # Kidnap detection: after normalisation the average weight is always 1/N,
+        # so we use the maximum normalised weight instead. If even the best particle
+        # is very close to uniform (max_weight ≈ 1/N), the filter has lost track.
+        max_weight = max(p.weight for p in self.particles)
+        kidnap_threshold = float(self.get_parameter('kidnap_weight_threshold').value)
+
+        if max_weight < kidnap_threshold:
+            self.get_logger().warn(
+                f'Kidnap detected (max normalised weight={max_weight:.2e} < {kidnap_threshold:.2e}). '
+                'Injecting recovery particles.'
+            )
+            self._inject_recovery_particles()
+
+    def _inject_recovery_particles(self) -> None:
+        """Replace a large fraction of the worst particles with random ones spread
+        across the free space, while keeping the best ones to avoid discarding a
+        correct hypothesis entirely."""
+        occupied_threshold = int(self.get_parameter('occupied_threshold').value)
+        recovery_ratio = float(self.get_parameter('kidnap_recovery_ratio').value)
+
+        free_cells = np.argwhere(
+            (self.map_data.occupancy_data >= 0) &
+            (self.map_data.occupancy_data < occupied_threshold)
+        )
+        if len(free_cells) == 0:
+            return
+
+        num_to_replace = int(len(self.particles) * recovery_ratio)
+
+        # Sort ascending by weight so the weakest particles are replaced first
+        self.particles.sort(key=lambda p: p.weight)
+
+        for i in range(num_to_replace):
+            cell_y, cell_x = free_cells[random.randrange(len(free_cells))]
+            world_x, world_y = self.map_data.cell_to_world(int(cell_x), int(cell_y))
+            self.particles[i] = ParticleState(
+                world_x, world_y,
+                random.uniform(-math.pi, math.pi),
+                1.0 / len(self.particles)
+            )
+
+        # Re-normalise weights uniformly so no single particle dominates
+        uniform_weight = 1.0 / len(self.particles)
+        for particle in self.particles:
+            particle.weight = uniform_weight
 
     def resample_particles(self) -> None:
         particle_count = len(self.particles)

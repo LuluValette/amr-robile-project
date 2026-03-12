@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
 from .common import OccupancyGridMap
 
@@ -23,11 +24,14 @@ class FrontierExplorerNode(Node):
         self.declare_parameter('min_goal_distance_m', 0.6)
         self.declare_parameter('goal_blacklist_radius_m', 0.6)
         self.declare_parameter('goal_publish_period_s', 2.0)
+        self.declare_parameter('goal_timeout_s', 30.0)
 
         self.map_data = OccupancyGridMap()
         self.robot_position_xy: Optional[Tuple[float, float]] = None
         self.current_goal_xy: Optional[Tuple[float, float]] = None
         self.goal_blacklist_xy: List[Tuple[float, float]] = []
+        self.exploration_complete = False
+        self.goal_sent_time: Optional[float] = None
 
         self.create_subscription(
             OccupancyGrid,
@@ -45,6 +49,11 @@ class FrontierExplorerNode(Node):
         self.goal_publisher = self.create_publisher(
             PoseStamped,
             self.get_parameter('goal_topic').value,
+            10
+        )
+        self.exploration_complete_publisher = self.create_publisher(
+            Bool,
+            '/exploration_complete',
             10
         )
 
@@ -168,6 +177,7 @@ class FrontierExplorerNode(Node):
 
         self.goal_publisher.publish(goal_msg)
         self.current_goal_xy = goal_xy
+        self.goal_sent_time = self.get_clock().now().nanoseconds * 1e-9
 
         self.get_logger().info(f'Published exploration goal: {goal_xy}')
 
@@ -175,10 +185,34 @@ class FrontierExplorerNode(Node):
         if not self.map_data.is_valid() or self.robot_position_xy is None:
             return
 
+        if self.exploration_complete:
+            return
+
+        # Check whether the current goal has timed out — if so, blacklist it
+        if self.current_goal_xy is not None and self.goal_sent_time is not None:
+            elapsed = self.get_clock().now().nanoseconds * 1e-9 - self.goal_sent_time
+            goal_timeout = float(self.get_parameter('goal_timeout_s').value)
+            robot_x, robot_y = self.robot_position_xy
+            distance_to_goal = math.hypot(
+                self.current_goal_xy[0] - robot_x,
+                self.current_goal_xy[1] - robot_y
+            )
+            if elapsed > goal_timeout and distance_to_goal > float(self.get_parameter('min_goal_distance_m').value):
+                self.get_logger().warn(
+                    f'Goal {self.current_goal_xy} timed out after {elapsed:.1f}s — blacklisting.'
+                )
+                self.goal_blacklist_xy.append(self.current_goal_xy)
+                self.current_goal_xy = None
+                self.goal_sent_time = None
+
         frontier_clusters = self.detect_frontier_clusters()
 
         if not frontier_clusters:
-            self.get_logger().info('No frontiers found. Exploration may be complete.')
+            self.get_logger().info('No frontiers found. Exploration complete.')
+            self.exploration_complete = True
+            msg = Bool()
+            msg.data = True
+            self.exploration_complete_publisher.publish(msg)
             return
 
         next_goal_xy = self.choose_best_frontier_goal(frontier_clusters)
@@ -189,6 +223,8 @@ class FrontierExplorerNode(Node):
 
         if self.current_goal_xy is not None:
             if math.hypot(next_goal_xy[0] - self.current_goal_xy[0], next_goal_xy[1] - self.current_goal_xy[1]) < 0.3:
+                # Goal unchanged — republish so the planner keeps tracking it
+                self.publish_exploration_goal(self.current_goal_xy)
                 return
 
         self.publish_exploration_goal(next_goal_xy)
